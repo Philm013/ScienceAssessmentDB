@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assessment Examples Database</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <span class="brand-leaf"></span>
+        <div>
+          <p class="brand-name">Assessment Explorer</p>
+          <p class="brand-subtitle">Unified NGSS task library</p>
+        </div>
+      </div>
+      <nav class="topnav" aria-label="Primary">
+        <a href="#results-summary">Browse Tasks</a>
+        <a href="#filter-groups">Filter Library</a>
+        <a href="#detail-panel">Inspector</a>
+      </nav>
+      <div class="topbar-actions">
+        <a class="topbar-link" href="#results-summary">Browse</a>
+        <a class="button-primary" href="#search-input">Search</a>
+      </div>
+    </header>
+
+    <section class="hero-band">
+      <div class="hero-copy">
+        <h1>Find sample assessment tasks quickly.</h1>
+        
+      </div>
+    </section>
+
+    <section class="section-intro">
+      <div>
+        <p class="eyebrow">Unified Index</p>
+        <h2>Search, filter, compare, and inspect in one workspace.</h2>
+      </div>
+      <p class="section-copy">The desktop view uses stable left and right rails for refinement and inspection. On mobile, filters and record details move into native-feeling slide-up sheets so the result grid stays clean and fast to scan.</p>
+    </section>
+
+    <main class="app-grid">
+      <aside class="filters-panel">
+        <div class="rail-surface">
+          <div class="mobile-panel-header">
+            <h2>Filters</h2>
+            <button id="mobile-filters-close" type="button" class="button-ghost">Done</button>
+          </div>
+
+          <div class="panel-card filters-card">
+            <div class="panel-heading-row">
+              <h2>Filter Library</h2>
+            </div>
+            <div id="filter-groups" class="filter-groups"></div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="results-panel">
+        <div class="search-block rail-card atlas-search-strip">
+          <label class="field-label" for="search-input">Search the library</label>
+          <p class="section-copy"> </p>
+            <div class="search-input-wrap">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="search-input" type="search" placeholder="What task are you looking for? Try: chemistry, ecosystems, argument from evidence">
+            <button id="reset-button" type="button" class="search-reset-button" aria-label="Clear search">&times;</button>
+          </div>
+          <p class="hint-text">Use filters on the left to narrow by grade, domain, source, and NGSS-aligned dimensions.</p>
+          <div class="active-filters-bar">
+            <div class="active-filters-heading">
+              <span>Active filters</span>
+              <span id="active-filter-count" class="count-pill">0</span>
+            </div>
+            <div id="active-filters" class="active-filters active-filters-inline"></div>
+          </div>
+        </div>
+
+        <div class="toolbar panel-card">
+          <div>
+            <p class="toolbar-label">Results</p>
+            <h2 id="results-summary">Loading database...</h2>
+          </div>
+          <div class="toolbar-actions">
+            <div class="toolbar-controls">
+              <label class="sort-control page-size-control">
+                <span>Per page</span>
+                <select id="results-page-size">
+                  <option value="12">12</option>
+                  <option value="24" selected>24</option>
+                  <option value="48">48</option>
+                  <option value="96">96</option>
+                </select>
+              </label>
+              <label class="sort-control">
+                <span>Sort</span>
+                <select id="sort-select">
+                  <option value="relevance">Relevance</option>
+                  <option value="title">Title A-Z</option>
+                  <option value="grade">Grade</option>
+                  <option value="dataset">Dataset</option>
+                </select>
+              </label>
+              <button id="quick-reset-button" type="button" class="button-secondary" title="Clear search and filters">Quick Reset</button>
+              <div class="view-toggle">
+                <button id="grid-view-button" type="button" class="button-secondary active" data-view="grid" title="Grid view">⊞</button>
+                <button id="list-view-button" type="button" class="button-secondary" data-view="list" title="List view">≡</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="results-list" class="results-list"></div>
+        <div id="results-pagination" class="results-pagination"></div>
+      </section>
+
+      <aside class="detail-panel" id="detail-panel">
+        <div class="mobile-panel-header">
+          <h2>Inspector</h2>
+          <button id="mobile-detail-close" type="button" class="button-ghost">Done</button>
+        </div>
+
+        <div class="detail-empty" id="detail-empty">
+          <p class="detail-kicker">Record inspector</p>
+          <h2>Select a result</h2>
+          <p>Choose any result card to inspect its metadata, links, and original source payload.</p>
+        </div>
+
+        <div class="detail-content hidden" id="detail-content">
+          <div class="detail-header">
+            <div>
+              <p id="detail-dataset" class="detail-kicker"></p>
+              <h2 id="detail-title"></h2>
+            </div>
+            <button type="button" id="detail-close" class="button-ghost">Close</button>
+          </div>
+          <p id="detail-description" class="detail-description"></p>
+          <div id="detail-links" class="detail-links"></div>
+          <div id="detail-metadata" class="detail-metadata"></div>
+          <details class="raw-details">
+            <summary>Original source record</summary>
+            <pre id="detail-raw"></pre>
+          </details>
+        </div>
+      </aside>
+    </main>
+
+    <div class="mobile-dock" id="mobile-dock">
+      <button id="mobile-filters-button" type="button" class="dock-button">Filters</button>
+      <button id="mobile-inspector-button" type="button" class="dock-button">Inspector</button>
+    </div>
+    <div class="mobile-scrim" id="mobile-scrim" aria-hidden="true"></div>
+    <div class="desktop-scrim" id="desktop-scrim" aria-hidden="true"></div>
+    <div id="standards-tooltip" class="standards-tooltip hidden" role="tooltip" aria-hidden="true"></div>
+  </div>
+
+  <template id="result-card-template">
+    <article class="result-card">
+      <div class="result-image-wrap">
+        <img class="result-image" alt="" loading="lazy">
+      </div>
+      <div class="result-card-header">
+        <div class="dataset-badge"></div>
+        <div class="record-id"></div>
+      </div>
+      <h3 class="result-title"></h3>
+      <p class="result-description"></p>
+      <div class="result-meta"></div>
+      <div class="result-tags"></div>
+         <div class="result-card-footer">
+           <div class="result-links"></div>
+         </div>
+    </article>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+  <script src="./app.js" defer></script>
+</body>
+</html>
