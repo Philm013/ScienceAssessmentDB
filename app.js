@@ -11,41 +11,47 @@ const state = {
   standardInfoCache: new Map(),
   selectedId: null,
   searchDebounceId: null,
+  tooltipShowTimerId: null,
+  tooltipHideTimerId: null,
+  tooltipLockUntilTs: 0,
   search: "",
   quickTag: "",
   sort: "relevance",
   view: "grid",
   pageSize: 24,
   visibleCount: 24,
-  officialOnly: false,
   filters: {
     dataset: new Set(),
-    domain: new Set(),
-    subjectAreas: new Set(),
     gradeBand: new Set(),
     gradeLevels: new Set(),
     source: new Set(),
     type: new Set(),
     scope: new Set(),
     collectionName: new Set(),
-    projectNames: new Set()
+    projectNames: new Set(),
+    practices: new Set(),
+    dciTags: new Set(),
+    crossCuttingConcepts: new Set(),
+    ngssPe: new Set()
   }
 };
 
 const filterConfig = [
   { key: "dataset", label: "Dataset" },
-  { key: "domain", label: "Domain" },
-  { key: "subjectAreas", label: "Subject Area" },
   { key: "gradeBand", label: "Grade Band" },
   { key: "gradeLevels", label: "Grade Level" },
   { key: "source", label: "Source" },
   { key: "type", label: "Type" },
   { key: "scope", label: "Scope" },
   { key: "collectionName", label: "Collection" },
-  { key: "projectNames", label: "Project" }
+  { key: "projectNames", label: "Project" },
+  { key: "practices", label: "Science and Engineering Practices" },
+  { key: "dciTags", label: "Disciplinary Core Ideas" },
+  { key: "crossCuttingConcepts", label: "Crosscutting Concepts" },
+  { key: "ngssPe", label: "Performance Expectations" }
 ];
 
-const defaultExpandedFilters = new Set(["dataset", "gradeLevels", "source"]);
+const defaultExpandedFilters = new Set();
 
 const STANDARD_ALIASES = {
   "analyzing data": "analyzing and interpreting data",
@@ -54,6 +60,39 @@ const STANDARD_ALIASES = {
   "evaluating evidence": "engaging in argument from evidence",
   "evaluating models": "developing and using models",
   "evaluating investigations": "planning and carrying out investigations"
+};
+
+const PRACTICE_CANONICAL = {
+  "analyzing and interpreting data": "Analyzing and Interpreting Data",
+  "analyzing data": "Analyzing and Interpreting Data",
+  "asking questions": "Asking Questions and Defining Problems",
+  "asking questions and defining problems": "Asking Questions and Defining Problems",
+  "constructing explanations": "Constructing Explanations and Designing Solutions",
+  "constructing explanations and designing solutions": "Constructing Explanations and Designing Solutions",
+  "developing and using models": "Developing and Using Models",
+  "engaging in argument from evidence": "Engaging in Argument from Evidence",
+  "obtaining": "Obtaining, Evaluating, and Communicating Information",
+  "and communicating information": "Obtaining, Evaluating, and Communicating Information",
+  "obtaining, evaluating, and communicating information": "Obtaining, Evaluating, and Communicating Information",
+  "obtaining, evaluating, and communcating information": "Obtaining, Evaluating, and Communicating Information",
+  "planning and carrying out investigations": "Planning and Carrying Out Investigations",
+  "planning carrying out investigations": "Planning and Carrying Out Investigations",
+  "using mathematics and computational thinking": "Using Mathematics and Computational Thinking",
+  "mathematics and computational thinking": "Using Mathematics and Computational Thinking"
+};
+
+const CROSS_CUTTING_CANONICAL = {
+  "cause and effect": "Cause and Effect",
+  "cause and effect: mechanism and explanation": "Cause and Effect",
+  "energy and matter": "Energy and Matter",
+  "energy and matter: flow, cycles, and conservation": "Energy and Matter",
+  "patterns": "Patterns",
+  "scale, proportion and quantity": "Scale, Proportion, and Quantity",
+  "scale, proportion, and quantity": "Scale, Proportion, and Quantity",
+  "stability and change": "Stability and Change",
+  "structure and function": "Structure and Function",
+  "systems and system models": "Systems and System Models",
+  "systems and systems models": "Systems and System Models"
 };
 
 const SUBJECT_AREA_CANONICAL = {
@@ -98,10 +137,35 @@ const PLACEHOLDER_IMAGE_TEMPLATE = `
   <text x="320" y="290" text-anchor="middle" font-family="Manrope, Arial, sans-serif" font-size="18" fill="#64748b">__DATASET__</text>
 </svg>`;
 
+const CACHE_SETTINGS = {
+  enabled: typeof window !== "undefined" && "indexedDB" in window,
+  dbName: "assessment-explorer-cache",
+  dbVersion: 1,
+  storeName: "json-cache",
+  cacheVersion: "2026-05-11-ngss-components-cleanup-1",
+  maxAgeMs: 24 * 60 * 60 * 1000
+};
+
+const CACHE_KEYS = {
+  database: "database:assessment_examples",
+  ngssReference: "ngss:reference-payloads"
+};
+
+const TOOLTIP_DELAY_MS = {
+  showHover: 180,
+  showFocus: 0,
+  hideHover: 120,
+  hideFocus: 0
+};
+
+const TOOLTIP_LOCK_MS = {
+  onEnter: 450,
+  onLeave: 220
+};
+
 const elements = {
   searchInput: document.querySelector("#search-input"),
   resetButton: document.querySelector("#reset-button"),
-  officialOnly: document.querySelector("#official-only"),
   activeFilters: document.querySelector("#active-filters"),
   activeFilterCount: document.querySelector("#active-filter-count"),
   filterGroups: document.querySelector("#filter-groups"),
@@ -109,6 +173,7 @@ const elements = {
   resultsPageSize: document.querySelector("#results-page-size"),
   sortSelect: document.querySelector("#sort-select"),
   quickResetButton: document.querySelector("#quick-reset-button"),
+  clearCacheButton: document.querySelector("#clear-cache-button"),
   resultsList: document.querySelector("#results-list"),
   resultsPagination: document.querySelector("#results-pagination"),
   detailEmpty: document.querySelector("#detail-empty"),
@@ -140,31 +205,7 @@ async function initialize() {
   wireEvents();
 
   try {
-    const databaseCandidates = [
-      "./assessment_examples_database_deduped.json",
-      "./assessment_examples_database.json"
-    ];
-
-    let response = null;
-    for (const candidate of databaseCandidates) {
-      const attempt = await fetch(candidate);
-      if (attempt.ok) {
-        response = attempt;
-        break;
-      }
-    }
-
-    if (!response) {
-      throw new Error("Failed to load database JSON file.");
-    }
-
-    state.data = await response.json();
-    state.standardsLookup = await loadNgssReferenceData();
-    state.records = annotateCrossDatasetConnections(mergeOverlappingRecords(dedupeById(state.data.records || [])));
-    prepareRuntimeCaches();
-    initializeFuzzySearch();
-    renderFilters();
-    applyFilters();
+    await refreshData();
   }
   catch (error) {
     elements.resultsSummary.textContent = "Database failed to load";
@@ -172,9 +213,212 @@ async function initialize() {
   }
 }
 
+async function refreshData(options = {}) {
+  const { bypassCache = false } = options;
+  state.data = await loadDatabaseData({ bypassCache });
+  state.standardsLookup = await loadNgssReferenceData({ bypassCache });
+  state.records = annotateCrossDatasetConnections(mergeOverlappingRecords(dedupeById(state.data.records || [])));
+  prepareRuntimeCaches();
+  initializeFuzzySearch();
+  renderFilters();
+  updateSearchClearButtonVisibility(state.search);
+  applyFilters();
+}
+
+async function loadDatabaseData(options = {}) {
+  const { bypassCache = false } = options;
+  const databaseCandidates = [
+    "./assessment_examples_database_deduped.json",
+    "./assessment_examples_database.json"
+  ];
+
+  if (!bypassCache) {
+    const cached = await getCachedJson(CACHE_KEYS.database, { maxAgeMs: CACHE_SETTINGS.maxAgeMs });
+    if (cached && cached.records) {
+      return cached;
+    }
+  }
+
+  try {
+    for (const candidate of databaseCandidates) {
+      const attempt = await fetch(candidate);
+      if (!attempt.ok) {
+        continue;
+      }
+
+      const payload = await attempt.json();
+      if (payload && payload.records) {
+        void setCachedJson(CACHE_KEYS.database, payload);
+      }
+      return payload;
+    }
+  }
+  catch (error) {
+    console.warn("Database fetch failed, attempting stale cache fallback.", error);
+  }
+
+  const stale = await getCachedJson(CACHE_KEYS.database, { allowStale: true });
+  if (stale && stale.records) {
+    return stale;
+  }
+
+  throw new Error("Failed to load database JSON file.");
+}
+
+function openCacheDatabase() {
+  if (!CACHE_SETTINGS.enabled) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const request = indexedDB.open(CACHE_SETTINGS.dbName, CACHE_SETTINGS.dbVersion);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(CACHE_SETTINGS.storeName)) {
+          db.createObjectStore(CACHE_SETTINGS.storeName, { keyPath: "key" });
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        console.warn("IndexedDB unavailable; running without persistent cache.", request.error);
+        resolve(null);
+      };
+    }
+    catch (error) {
+      console.warn("IndexedDB open failed; running without persistent cache.", error);
+      resolve(null);
+    }
+  });
+}
+
+async function getCachedJson(key, options = {}) {
+  const { maxAgeMs = CACHE_SETTINGS.maxAgeMs, allowStale = false } = options;
+  const db = await openCacheDatabase();
+  if (!db) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CACHE_SETTINGS.storeName, "readonly");
+      const store = tx.objectStore(CACHE_SETTINGS.storeName);
+      const request = store.get(key);
+
+      request.onsuccess = () => {
+        const entry = request.result;
+        if (!entry || entry.version !== CACHE_SETTINGS.cacheVersion) {
+          resolve(null);
+          return;
+        }
+
+        if (allowStale) {
+          resolve(entry.value || null);
+          return;
+        }
+
+        const ageMs = Date.now() - Number(entry.cachedAt || 0);
+        resolve(ageMs <= maxAgeMs ? entry.value || null : null);
+      };
+
+      request.onerror = () => resolve(null);
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => db.close();
+      tx.onabort = () => db.close();
+    }
+    catch (error) {
+      db.close();
+      console.warn("Cache read failed.", error);
+      resolve(null);
+    }
+  });
+}
+
+async function setCachedJson(key, value) {
+  const db = await openCacheDatabase();
+  if (!db) {
+    return;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CACHE_SETTINGS.storeName, "readwrite");
+      const store = tx.objectStore(CACHE_SETTINGS.storeName);
+      store.put({
+        key,
+        version: CACHE_SETTINGS.cacheVersion,
+        cachedAt: Date.now(),
+        value
+      });
+
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    }
+    catch (error) {
+      db.close();
+      console.warn("Cache write failed.", error);
+      resolve();
+    }
+  });
+}
+
+async function clearCachedJson(key) {
+  const db = await openCacheDatabase();
+  if (!db) {
+    return;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CACHE_SETTINGS.storeName, "readwrite");
+      const store = tx.objectStore(CACHE_SETTINGS.storeName);
+      store.delete(key);
+
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    }
+    catch (error) {
+      db.close();
+      console.warn("Cache delete failed.", error);
+      resolve();
+    }
+  });
+}
+
+async function clearAllCachedJson() {
+  await Promise.all([
+    clearCachedJson(CACHE_KEYS.database),
+    clearCachedJson(CACHE_KEYS.ngssReference)
+  ]);
+}
+
 function wireEvents() {
   elements.searchInput?.addEventListener("input", (event) => {
-    state.search = event.target.value.trim().toLowerCase();
+    const nextSearch = event.target.value.trim().toLowerCase();
+    state.search = nextSearch;
+    updateSearchClearButtonVisibility(nextSearch);
     if (state.searchDebounceId) {
       window.clearTimeout(state.searchDebounceId);
     }
@@ -185,8 +429,34 @@ function wireEvents() {
     }, 150);
   });
 
-  elements.resetButton?.addEventListener("click", resetFilters);
+  elements.resetButton?.addEventListener("click", clearSearchInput);
   elements.quickResetButton?.addEventListener("click", resetFilters);
+  elements.clearCacheButton?.addEventListener("click", async () => {
+    const button = elements.clearCacheButton;
+    if (!button) {
+      return;
+    }
+
+    const previousText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Refreshing...";
+
+    try {
+      await clearAllCachedJson();
+      await refreshData({ bypassCache: true });
+      button.textContent = "Cache Cleared";
+    }
+    catch (error) {
+      console.warn("Cache clear refresh failed.", error);
+      button.textContent = "Refresh Failed";
+    }
+    finally {
+      window.setTimeout(() => {
+        button.textContent = previousText || "Clear Cache";
+        button.disabled = false;
+      }, 1200);
+    }
+  });
   elements.resultsPageSize?.addEventListener("change", (event) => {
     const nextPageSize = Number(event.target.value) || 24;
     state.pageSize = nextPageSize;
@@ -200,11 +470,6 @@ function wireEvents() {
 
   elements.gridViewButton?.addEventListener("click", () => changeView("grid"));
   elements.listViewButton?.addEventListener("click", () => changeView("list"));
-
-  elements.officialOnly?.addEventListener("change", (event) => {
-    state.officialOnly = event.target.checked;
-    applyFilters();
-  });
 
   elements.detailClose?.addEventListener("click", closeDetailPanel);
   elements.filtersToggleButton?.addEventListener("click", () => togglePanel("filters"));
@@ -220,6 +485,10 @@ function wireEvents() {
   document.addEventListener("focusin", handleStandardTooltipTrigger);
   document.addEventListener("mouseleave", handleStandardTooltipExit, true);
   document.addEventListener("focusout", handleStandardTooltipExit);
+  elements.standardsTooltip?.addEventListener("pointerdown", handleStandardsTooltipAction);
+  elements.standardsTooltip?.addEventListener("click", handleStandardsTooltipAction);
+  elements.standardsTooltip?.addEventListener("mouseenter", handleStandardTooltipEnterTooltip);
+  elements.standardsTooltip?.addEventListener("focusin", handleStandardTooltipEnterTooltip);
   elements.standardsTooltip?.addEventListener("mouseleave", handleStandardTooltipLeaveTooltip);
   window.addEventListener("scroll", hideStandardTooltip, true);
 
@@ -267,6 +536,31 @@ function initializeFuzzySearch() {
   });
 }
 
+function clearSearchInput() {
+  if (state.searchDebounceId) {
+    window.clearTimeout(state.searchDebounceId);
+    state.searchDebounceId = null;
+  }
+
+  state.search = "";
+  if (elements.searchInput) {
+    elements.searchInput.value = "";
+    elements.searchInput.focus();
+  }
+
+  updateSearchClearButtonVisibility("");
+  applyFilters();
+}
+
+function updateSearchClearButtonVisibility(value = "") {
+  if (!elements.resetButton) {
+    return;
+  }
+
+  const hasValue = String(value).trim().length > 0;
+  elements.resetButton.classList.toggle("is-visible", hasValue);
+}
+
 function resetFilters() {
   if (state.searchDebounceId) {
     window.clearTimeout(state.searchDebounceId);
@@ -281,6 +575,7 @@ function resetFilters() {
   Object.values(state.filters).forEach((set) => set.clear());
 
   elements.searchInput.value = "";
+  updateSearchClearButtonVisibility("");
   elements.resultsPageSize.value = "24";
   elements.sortSelect.value = "relevance";
   elements.officialOnly.checked = false;
@@ -309,11 +604,18 @@ function renderHeroStats() {
 }
 
 function renderFilters() {
+  const currentlyOpenKeys = new Set(
+    Array.from(elements.filterGroups?.querySelectorAll("details.filter-group[open][data-filter-key]") || [])
+      .map((el) => el.getAttribute("data-filter-key"))
+      .filter(Boolean)
+  );
+
   const fragments = filterConfig.map(({ key, label }) => {
     const counts = state.facetCountsByKey.get(key) || getFacetCounts(key);
     const selectedValues = state.filters[key];
+    const maxOptions = getFacetDisplayLimit(key);
     const options = getSortedFacetEntries(key, counts)
-      .slice(0, 40)
+      .slice(0, maxOptions)
       .map(([value, count]) => {
         const displayValue = String(value);
         const optionLabel = getFilterOptionLabel(key, displayValue);
@@ -324,7 +626,7 @@ function renderFilters() {
           <div class="filter-option${subOptionClass}">
             <label>
               <input type="checkbox" data-filter-key="${key}" data-filter-value="${escapeAttribute(displayValue)}" ${checked}>
-              ${renderStandardText(optionLabel, "filter-option-label", true)}
+              <span class="filter-option-label">${escapeHtml(optionLabel)}</span>
             </label>
             <span class="count-pill">${count}</span>
           </div>
@@ -332,10 +634,10 @@ function renderFilters() {
       }).join("");
 
     const selectedCount = selectedValues.size;
-    const isOpen = selectedCount > 0 || defaultExpandedFilters.has(key);
+    const isOpen = currentlyOpenKeys.has(key) || defaultExpandedFilters.has(key);
 
     return `
-      <details class="filter-group" ${isOpen ? "open" : ""}>
+      <details class="filter-group" data-filter-key="${escapeAttribute(key)}" ${isOpen ? "open" : ""}>
         <summary class="filter-summary">
           <span class="filter-summary-label">${escapeHtml(label)}</span>
           <span class="filter-summary-meta">
@@ -348,6 +650,18 @@ function renderFilters() {
   }).join("");
 
   elements.filterGroups.innerHTML = fragments;
+}
+
+function getFacetDisplayLimit(key) {
+  if (key === "ngssPe") {
+    return 500;
+  }
+
+  if (key === "dciTags") {
+    return 200;
+  }
+
+  return 40;
 }
 
 function getFacetCounts(key) {
@@ -367,6 +681,14 @@ function getSortedFacetEntries(key, counts) {
   const entries = [...counts.entries()];
   if (key === "subjectAreas") {
     return sortSubjectAreaFacetEntries(entries);
+  }
+
+  if (key === "dciTags") {
+    return sortDciFacetEntries(entries);
+  }
+
+  if (key === "ngssPe") {
+    return sortPerformanceExpectationFacetEntries(entries);
   }
 
   if (key === "gradeLevels") {
@@ -956,10 +1278,6 @@ function renderActiveFilters() {
     }
   }
 
-  if (state.officialOnly) {
-    activePills.push({ key: "officialOnly", label: "Official", value: "Yes" });
-  }
-
   if (state.search) {
     activePills.push({ key: "search", label: "Search", value: state.search });
   }
@@ -987,10 +1305,6 @@ function removeActiveFilter(key, value) {
   if (key === "search") {
     state.search = "";
     elements.searchInput.value = "";
-  }
-  else if (key === "officialOnly") {
-    state.officialOnly = false;
-    elements.officialOnly.checked = false;
   }
   else if (key === "quickTag") {
     state.quickTag = "";
@@ -1169,7 +1483,89 @@ function getRecordValuesForKey(record, key) {
     return [...new Set(values)];
   }
 
+  if (key === "practices") {
+    return normalizeToArray(record?.[key])
+      .map((value) => normalizePracticeValue(toPlainText(value)))
+      .filter(Boolean);
+  }
+
+  if (key === "crossCuttingConcepts") {
+    return normalizeToArray(record?.[key])
+      .map((value) => normalizeCrossCuttingConceptValue(toPlainText(value)))
+      .filter(Boolean);
+  }
+
+  if (key === "ngssPe") {
+    return normalizeToArray(record?.[key])
+      .map((value) => normalizePerformanceExpectationValue(toPlainText(value)))
+      .filter(Boolean);
+  }
+
+  if (key === "dciTags") {
+    return normalizeToArray(record?.[key])
+      .map((value) => normalizeDciValue(toPlainText(value)))
+      .filter(Boolean);
+  }
+
   return getDisplayValues(record?.[key], key);
+}
+
+function normalizePracticeValue(value) {
+  const text = toPlainText(value).trim();
+  if (!text) {
+    return "";
+  }
+
+  const lower = text.toLowerCase();
+  const alias = STANDARD_ALIASES[lower] || lower;
+  return PRACTICE_CANONICAL[alias] || PRACTICE_CANONICAL[lower] || text;
+}
+
+function normalizeCrossCuttingConceptValue(value) {
+  const text = toPlainText(value).trim();
+  if (!text) {
+    return "";
+  }
+
+  const lower = text.toLowerCase();
+  if (lower === "*n/a" || lower === "multiple possible" || lower === "influences on society and natural world") {
+    return "";
+  }
+
+  return CROSS_CUTTING_CANONICAL[lower] || text;
+}
+
+function normalizePerformanceExpectationValue(value) {
+  const text = toPlainText(value).trim();
+  if (!text) {
+    return "";
+  }
+
+  const lower = text.toLowerCase();
+  if (lower === "???" || lower === "*not grade level appropriate") {
+    return "";
+  }
+
+  const compact = text
+    .replace(/[.\s]+$/g, "")
+    .replace(/\s*-\s*/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^([A-Z]{1,4})-(\d+)-([A-Z]{1,4})-(\d+)$/i, "$1-$3$2-$4");
+
+  if (/^(k|[0-9]{1,2}|hs|ms|3-5|6-8|9-12)-/i.test(compact)) {
+    return compact.toUpperCase();
+  }
+
+  return compact;
+}
+
+function normalizeDciValue(value) {
+  const text = toPlainText(value).trim();
+  if (!text) {
+    return "";
+  }
+
+  return text.replace(/\s+/g, " ");
 }
 
 function normalizeDisplayValue(value, key = "") {
@@ -1451,9 +1847,19 @@ function combineOverlappingRecords(left, right) {
   ];
 
   for (const field of listFields) {
+    const useCanonicalFilterValues = field === "practices"
+      || field === "dciTags"
+      || field === "crossCuttingConcepts"
+      || field === "ngssPe";
+    const preferredValues = useCanonicalFilterValues
+      ? getRecordValuesForKey(preferred, field)
+      : getDisplayValues(preferred[field], field);
+    const alternateValues = useCanonicalFilterValues
+      ? getRecordValuesForKey(alternate, field)
+      : getDisplayValues(alternate[field], field);
     const mergedValues = [
-      ...getDisplayValues(preferred[field], field),
-      ...getDisplayValues(alternate[field], field)
+      ...preferredValues,
+      ...alternateValues
     ];
 
     merged[field] = [...new Set(mergedValues.filter(Boolean))];
@@ -1958,7 +2364,8 @@ function resolveRecordForStandardTrigger(trigger) {
   return null;
 }
 
-async function loadNgssReferenceData() {
+async function loadNgssReferenceData(options = {}) {
+  const { bypassCache = false } = options;
   const sources = [
     "./JSON/ngssK5.json",
     "./JSON/ngss68.json",
@@ -1966,16 +2373,33 @@ async function loadNgssReferenceData() {
     "./JSON/ngss3DElements.json"
   ];
 
+  if (!bypassCache) {
+    const cachedPayloads = await getCachedJson(CACHE_KEYS.ngssReference, { maxAgeMs: CACHE_SETTINGS.maxAgeMs });
+    if (Array.isArray(cachedPayloads) && cachedPayloads.length === 4) {
+      return buildNgssLookup(cachedPayloads[0], cachedPayloads[1], cachedPayloads[2], cachedPayloads[3]);
+    }
+  }
+
   try {
     const payloads = await Promise.all(sources.map(async (source) => {
       const response = await fetch(source);
       return response.ok ? response.json() : null;
     }));
 
+    if (payloads.some((payload) => payload !== null)) {
+      void setCachedJson(CACHE_KEYS.ngssReference, payloads);
+    }
+
     return buildNgssLookup(payloads[0], payloads[1], payloads[2], payloads[3]);
   }
   catch (error) {
     console.warn("NGSS reference data failed to load.", error);
+
+    const stalePayloads = await getCachedJson(CACHE_KEYS.ngssReference, { allowStale: true });
+    if (Array.isArray(stalePayloads) && stalePayloads.length === 4) {
+      return buildNgssLookup(stalePayloads[0], stalePayloads[1], stalePayloads[2], stalePayloads[3]);
+    }
+
     return new Map();
   }
 }
@@ -2138,25 +2562,104 @@ function handleStandardTooltipTrigger(event) {
     return;
   }
 
+  if (Date.now() < (state.tooltipLockUntilTs || 0)) {
+    return;
+  }
+
   const trigger = event.target.closest("[data-standard-value]");
   if (!trigger) {
     return;
   }
 
+  clearTooltipHideTimer();
+
+  const showDelay = event.type === "focusin"
+    ? TOOLTIP_DELAY_MS.showFocus
+    : TOOLTIP_DELAY_MS.showHover;
+
+  clearTooltipShowTimer();
+  state.tooltipShowTimerId = window.setTimeout(() => {
+    state.tooltipShowTimerId = null;
+    showStandardTooltip(trigger);
+  }, showDelay);
+}
+
+function showStandardTooltip(trigger) {
+  if (!(trigger instanceof Element)) {
+    return;
+  }
+
+  const standardValue = toPlainText(trigger.dataset.standardValue);
+  if (!standardValue) {
+    return;
+  }
+
   const contextRecord = resolveRecordForStandardTrigger(trigger);
-  const info = getStandardInfo(trigger.dataset.standardValue, contextRecord);
+  const info = getStandardInfo(standardValue, contextRecord);
   if (!info || !elements.standardsTooltip) {
     return;
   }
 
-  elements.standardsTooltip.innerHTML = renderStandardsTooltip(info);
+  elements.standardsTooltip.dataset.tooltipStandardValue = standardValue;
+  elements.standardsTooltip.innerHTML = renderStandardsTooltip(info, standardValue);
   elements.standardsTooltip.classList.remove("hidden");
   elements.standardsTooltip.setAttribute("aria-hidden", "false");
   positionStandardTooltip(trigger);
 }
 
+function handleStandardsTooltipAction(event) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return;
+  }
+
+  const button = target.closest("[data-tooltip-action='see-similar']");
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const value = toPlainText(elements.standardsTooltip?.dataset?.tooltipStandardValue);
+  if (!value) {
+    return;
+  }
+
+  applySimilarMetadataFilter(value);
+  hideStandardTooltip();
+}
+
+function applySimilarMetadataFilter(value) {
+  const normalizedValue = toPlainText(value);
+  if (!normalizedValue) {
+    return;
+  }
+
+  const hasQuickTagMatch = state.records.some((record) => {
+    const pool = record?._quickTagPool || [];
+    return pool.includes(normalizedValue);
+  });
+
+  if (hasQuickTagMatch) {
+    state.quickTag = normalizedValue;
+    applyFilters();
+    return;
+  }
+
+  state.search = normalizedValue.toLowerCase();
+  if (elements.searchInput) {
+    elements.searchInput.value = normalizedValue;
+  }
+  applyFilters();
+}
+
 function handleStandardTooltipExit(event) {
   if (!(event.target instanceof Element)) {
+    return;
+  }
+
+  if (event.type === "focusout" && elements.standardsTooltip?.matches(":hover")) {
     return;
   }
 
@@ -2170,7 +2673,11 @@ function handleStandardTooltipExit(event) {
     return;
   }
 
-  hideStandardTooltip();
+  clearTooltipShowTimer();
+  const hideDelay = event.type === "focusout"
+    ? TOOLTIP_DELAY_MS.hideFocus
+    : TOOLTIP_DELAY_MS.hideHover;
+  queueHideStandardTooltip(hideDelay);
 }
 
 function handleStandardTooltipLeaveTooltip(event) {
@@ -2180,18 +2687,65 @@ function handleStandardTooltipLeaveTooltip(event) {
     // Still over a pill, keep tooltip visible
     return;
   }
+
+  state.tooltipLockUntilTs = Date.now() + TOOLTIP_LOCK_MS.onLeave;
   
   // Left the tooltip and not hovering a pill, hide it
-  hideStandardTooltip();
+  queueHideStandardTooltip(TOOLTIP_DELAY_MS.hideHover);
+}
+
+function handleStandardTooltipEnterTooltip() {
+  state.tooltipLockUntilTs = Date.now() + TOOLTIP_LOCK_MS.onEnter;
+  clearTooltipHideTimer();
 }
 
 function hideStandardTooltip() {
+  clearTooltipShowTimer();
+  clearTooltipHideTimer();
+
   if (!elements.standardsTooltip) {
     return;
   }
 
   elements.standardsTooltip.classList.add("hidden");
   elements.standardsTooltip.setAttribute("aria-hidden", "true");
+  delete elements.standardsTooltip.dataset.tooltipStandardValue;
+}
+
+function queueHideStandardTooltip(delayMs) {
+  clearTooltipHideTimer();
+  state.tooltipHideTimerId = window.setTimeout(() => {
+    state.tooltipHideTimerId = null;
+
+    const tooltip = elements.standardsTooltip;
+    if (tooltip) {
+      const tooltipHasHover = tooltip.matches(":hover");
+      const tooltipHasFocus = tooltip.contains(document.activeElement);
+      if (tooltipHasHover || tooltipHasFocus) {
+        return;
+      }
+    }
+
+    hideStandardTooltip();
+  }, delayMs);
+}
+
+function clearTooltipShowTimer() {
+  if (!state.tooltipShowTimerId) {
+    return;
+  }
+
+  window.clearTimeout(state.tooltipShowTimerId);
+  state.tooltipShowTimerId = null;
+}
+
+function clearTooltipHideTimer() {
+  if (!state.tooltipHideTimerId) {
+    return;
+  }
+
+  window.clearTimeout(state.tooltipHideTimerId);
+  state.tooltipHideTimerId = null;
 }
 
 function positionStandardTooltip(trigger) {
@@ -2208,9 +2762,13 @@ function positionStandardTooltip(trigger) {
   tooltip.style.left = `${left}px`;
 }
 
-function renderStandardsTooltip(info) {
+function renderStandardsTooltip(info, standardValue = "") {
   const bullets = (info.bullets || []).length
     ? `<ul>${info.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul>`
+    : "";
+
+  const action = standardValue
+    ? `<div class="standards-tooltip-actions"><button type="button" class="standards-tooltip-action" data-tooltip-action="see-similar" aria-label="See similar tasks for ${escapeAttribute(standardValue)}">See Similar</button></div>`
     : "";
 
   return `
@@ -2219,6 +2777,7 @@ function renderStandardsTooltip(info) {
     ${info.subtitle ? `<div class="standards-tooltip-subtitle">${escapeHtml(info.subtitle)}</div>` : ""}
     ${info.summary ? `<p class="standards-tooltip-summary">${escapeHtml(info.summary)}</p>` : ""}
     ${bullets}
+    ${action}
   `;
 }
 
@@ -2329,12 +2888,7 @@ function prepareRuntimeCaches() {
     const filterValuesByKey = {};
     const filterValueSets = {};
     for (const { key } of filterConfig) {
-      const values = key === "dataset"
-        ? [...new Set([
-          toPlainText(record?.dataset),
-          ...normalizeToArray(record?.alsoInDatasets).map((entry) => toPlainText(entry))
-        ].filter(Boolean))]
-        : getDisplayValues(record?.[key], key);
+      const values = getRecordValuesForKey(record, key);
 
       filterValuesByKey[key] = values;
       filterValueSets[key] = new Set(values);
@@ -2343,12 +2897,12 @@ function prepareRuntimeCaches() {
     record._filterValuesByKey = filterValuesByKey;
     record._filterValueSets = filterValueSets;
     record._quickTagPool = [
-      ...getDisplayValues(record.dciTags),
-      ...getDisplayValues(record.crossCuttingConcepts),
-      ...getDisplayValues(record.practices),
+      ...getRecordValuesForKey(record, "dciTags"),
+      ...getRecordValuesForKey(record, "crossCuttingConcepts"),
+      ...getRecordValuesForKey(record, "practices"),
       ...getDisplayValues(record.stse),
       ...getDisplayValues(record.natureOfScience),
-      ...getDisplayValues(record.ngssPe)
+      ...getRecordValuesForKey(record, "ngssPe")
     ];
   }
 
@@ -2364,4 +2918,122 @@ function prepareRuntimeCaches() {
       keyWords: keyNorm.split(/\s+/).filter((word) => word.length > 2)
     };
   });
+}
+
+function sortDciFacetEntries(entries) {
+  const domainOrder = { PS: 1, LS: 2, ESS: 3, ETS: 4 };
+
+  return entries.sort((left, right) => {
+    const leftInfo = parseDciForSort(String(left[0]));
+    const rightInfo = parseDciForSort(String(right[0]));
+
+    const leftDomainRank = domainOrder[leftInfo.domain] || 99;
+    const rightDomainRank = domainOrder[rightInfo.domain] || 99;
+    if (leftDomainRank !== rightDomainRank) {
+      return leftDomainRank - rightDomainRank;
+    }
+
+    if (leftInfo.coreNumber !== rightInfo.coreNumber) {
+      return leftInfo.coreNumber - rightInfo.coreNumber;
+    }
+
+    if (leftInfo.subcode !== rightInfo.subcode) {
+      return leftInfo.subcode.localeCompare(rightInfo.subcode);
+    }
+
+    return right[1] - left[1] || String(left[0]).localeCompare(String(right[0]));
+  });
+}
+
+function parseDciForSort(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^([A-Z]{2,4})(\d+)(?:\.([A-Z]))?/i);
+  if (!match) {
+    return {
+      domain: "",
+      coreNumber: 999,
+      subcode: "",
+      raw: text
+    };
+  }
+
+  return {
+    domain: match[1].toUpperCase(),
+    coreNumber: Number.parseInt(match[2], 10) || 999,
+    subcode: (match[3] || "").toUpperCase(),
+    raw: text
+  };
+}
+
+function sortPerformanceExpectationFacetEntries(entries) {
+  return entries.sort((left, right) => {
+    const leftInfo = parsePerformanceExpectationForSort(String(left[0]));
+    const rightInfo = parsePerformanceExpectationForSort(String(right[0]));
+
+    if (leftInfo.gradeRank !== rightInfo.gradeRank) {
+      return leftInfo.gradeRank - rightInfo.gradeRank;
+    }
+
+    if (leftInfo.domain !== rightInfo.domain) {
+      return leftInfo.domain.localeCompare(rightInfo.domain);
+    }
+
+    if (leftInfo.coreNumber !== rightInfo.coreNumber) {
+      return leftInfo.coreNumber - rightInfo.coreNumber;
+    }
+
+    if (leftInfo.expectationNumber !== rightInfo.expectationNumber) {
+      return leftInfo.expectationNumber - rightInfo.expectationNumber;
+    }
+
+    return right[1] - left[1] || String(left[0]).localeCompare(String(right[0]));
+  });
+}
+
+function parsePerformanceExpectationForSort(value) {
+  const text = String(value || "").trim().toUpperCase();
+  const normalized = text.replace(/^([A-Z]{1,4})-(\d+)-([A-Z]{1,4})-(\d+)$/, "$1-$3$2-$4");
+  const match = normalized.match(/^((?:PRE-K|PREK|K|MS|HS|\d{1,2}(?:-\d{1,2})?))-(?:([A-Z]{2,4})(\d+))(?:-(\d+))?/);
+
+  const gradePart = match?.[1] || "";
+  const domainLetters = match?.[2] || "";
+  const domainNumber = match?.[3] || "";
+  const expectationPart = match?.[4] || "";
+  const domainPart = `${domainLetters}${domainNumber}`;
+
+  return {
+    gradeRank: getPeGradeRank(gradePart),
+    domain: domainPart,
+    coreNumber: Number.parseInt(domainNumber, 10) || getLeadingNumber(domainPart),
+    expectationNumber: getLeadingNumber(expectationPart)
+  };
+}
+
+function getPeGradeRank(gradePart) {
+  const normalized = String(gradePart || "").trim().toUpperCase();
+  if (normalized === "PRE-K" || normalized === "PREK") {
+    return 0;
+  }
+  if (normalized === "K") {
+    return 1;
+  }
+  if (/^\d+$/.test(normalized)) {
+    return 1 + Number.parseInt(normalized, 10);
+  }
+  if (/^(\d+)-(\d+)$/.test(normalized)) {
+    const match = normalized.match(/^(\d+)-(\d+)$/);
+    return 50 + Number.parseInt(match[1], 10);
+  }
+  if (normalized === "MS") {
+    return 80;
+  }
+  if (normalized === "HS") {
+    return 90;
+  }
+  return 999;
+}
+
+function getLeadingNumber(value) {
+  const match = String(value || "").match(/(\d+)/);
+  return match ? Number.parseInt(match[1], 10) : 999;
 }

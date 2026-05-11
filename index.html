@@ -32,8 +32,8 @@
 
     <section class="hero-band">
       <div class="hero-copy">
-        <h1>Find the right assessment task quickly.</h1>
-        <p class="section-copy">Search by title, standards, practices, and grade band. Open the source page from each card without leaving context.</p>
+        <h1>Find sample assessment tasks quickly.</h1>
+        
       </div>
     </section>
 
@@ -56,7 +56,6 @@
           <div class="panel-card filters-card">
             <div class="panel-heading-row">
               <h2>Filter Library</h2>
-              <label class="toggle-row"><input type="checkbox" id="official-only"> Official only</label>
             </div>
             <div id="filter-groups" class="filter-groups"></div>
           </div>
@@ -66,10 +65,11 @@
       <section class="results-panel">
         <div class="search-block rail-card atlas-search-strip">
           <label class="field-label" for="search-input">Search the library</label>
-          <div class="search-input-wrap">
+          <p class="section-copy"> </p>
+            <div class="search-input-wrap">
             <span class="search-icon" aria-hidden="true">⌕</span>
             <input id="search-input" type="search" placeholder="What task are you looking for? Try: chemistry, ecosystems, argument from evidence">
-            <button id="reset-button" type="button" class="button-secondary search-reset-button">Clear</button>
+            <button id="reset-button" type="button" class="search-reset-button" aria-label="Clear search">&times;</button>
           </div>
           <p class="hint-text">Use filters on the left to narrow by grade, domain, source, and NGSS-aligned dimensions.</p>
           <div class="active-filters-bar">
@@ -87,9 +87,6 @@
             <h2 id="results-summary">Loading database...</h2>
           </div>
           <div class="toolbar-actions">
-            <div class="toolbar-panel-actions">
-              <button id="inspector-toggle-button" type="button" class="button-secondary">Inspector</button>
-            </div>
             <div class="toolbar-controls">
               <label class="sort-control page-size-control">
                 <span>Per page</span>
