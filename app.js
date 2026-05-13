@@ -1,3 +1,4 @@
+const state = {
   data: null,
   records: [],
   filteredRecords: [],
@@ -11,7 +12,6 @@
   selectedId: null,
   searchDebounceId: null,
   tooltipShowTimerId: null,
-const filterConfig = [
   tooltipHideTimerId: null,
   tooltipLockUntilTs: 0,
   search: "",
@@ -39,6 +39,7 @@ const filterConfig = [
 
 const filterConfig = [
   { key: "dataset", label: "Dataset" },
+  { key: "subjectAreas", label: "Subject Areas" },
   { key: "gradeBand", label: "Grade Band" },
   { key: "gradeLevels", label: "Grade Level" },
   { key: "source", label: "Source" },
@@ -49,7 +50,13 @@ const filterConfig = [
   { key: "practices", label: "Science and Engineering Practices" },
   { key: "dciTags", label: "Disciplinary Core Ideas" },
   { key: "crossCuttingConcepts", label: "Crosscutting Concepts" },
-  { key: "ngssPe", label: "Performance Expectations" }
+  { key: "ngssPe", label: "Performance Expectations" },
+  // Disabled/hidden filters available in state but not shown in UI:
+  // { key: "keywords", label: "Keywords" },
+  // { key: "notableFeatures", label: "Notable Features" },
+  // { key: "additionalAspects", label: "Additional Aspects" },
+  // { key: "stse", label: "STSE" },
+  // { key: "natureOfScience", label: "Nature of Science" }
 ];
 
 const defaultExpandedFilters = new Set();
