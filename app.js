@@ -1,4 +1,3 @@
-const state = {
   data: null,
   records: [],
   filteredRecords: [],
@@ -12,6 +11,7 @@ const state = {
   selectedId: null,
   searchDebounceId: null,
   tooltipShowTimerId: null,
+const filterConfig = [
   tooltipHideTimerId: null,
   tooltipLockUntilTs: 0,
   search: "",
@@ -29,6 +29,7 @@ const state = {
     scope: new Set(),
     collectionName: new Set(),
     projectNames: new Set(),
+    subjectAreas: new Set(),
     practices: new Set(),
     dciTags: new Set(),
     crossCuttingConcepts: new Set(),
